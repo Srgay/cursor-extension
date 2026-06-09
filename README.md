@@ -47,6 +47,12 @@ $env:CURSOR_WORKBENCH_DIR="C:\Path\To\Cursor\resources\app\out\vs\code\electron-
 npm run patch
 ```
 
+如果 Windows 报 `EPERM: operation not permitted`，说明 Cursor 安装在 `C:\Program Files` 等受保护目录。请用管理员身份打开 PowerShell 后重新执行：
+
+```powershell
+npm run patch
+```
+
 ## 备用方式：临时注入
 
 临时注入适合调试脚本，不推荐作为日常使用方式。它需要用调试端口启动 Cursor：
