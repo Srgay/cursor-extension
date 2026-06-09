@@ -1,0 +1,13 @@
+{
+  "name": "cursor-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local Cursor workbench extension for keeping MAX Mode off and blocking risky sends.",
+  "scripts": {
+    "check": "node --check src/cursor-max-mode-guard.js && node --check src/cursor-workbench-paths.mjs && node --check src/install-cursor-max-mode-guard.mjs && node --check src/patch-cursor-workbench.mjs && node --check src/unpatch-cursor-workbench.mjs",
+    "inject": "node src/install-cursor-max-mode-guard.mjs",
+    "patch": "node src/patch-cursor-workbench.mjs",
+    "unpatch": "node src/unpatch-cursor-workbench.mjs"
+  }
+}
