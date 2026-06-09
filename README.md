@@ -10,21 +10,7 @@
 - 如果彩色 `MAX` 存在且聊天框有内容，显示 50px 红色渐变边框。
 - 同一条件下禁用 `.send-with-mode` 发送控件，并拦截点击发送和回车发送。
 
-## 方式一：临时注入
-
-先用调试端口启动 Cursor：
-
-```bash
-open -na /Applications/Cursor.app --args --remote-debugging-port=9222
-```
-
-然后在本项目根目录执行：
-
-```bash
-npm run inject
-```
-
-## 方式二：随 Cursor 启动加载
+## 推荐方式：随 Cursor 启动加载
 
 Patch Cursor 的 `workbench.html`，让脚本随 Cursor 启动加载：
 
@@ -32,11 +18,15 @@ Patch Cursor 的 `workbench.html`，让脚本随 Cursor 启动加载：
 npm run patch
 ```
 
+然后完整退出 Cursor，再重新打开 Cursor。
+
 恢复：
 
 ```bash
 npm run unpatch
 ```
+
+Cursor 更新后可能会覆盖 `workbench.html`，如果功能失效，重新执行 `npm run patch`。
 
 默认路径：
 
@@ -55,6 +45,20 @@ Windows PowerShell:
 ```powershell
 $env:CURSOR_WORKBENCH_DIR="C:\Path\To\Cursor\resources\app\out\vs\code\electron-sandbox\workbench"
 npm run patch
+```
+
+## 备用方式：临时注入
+
+临时注入适合调试脚本，不推荐作为日常使用方式。它需要用调试端口启动 Cursor：
+
+```bash
+open -na /Applications/Cursor.app --args --remote-debugging-port=9222
+```
+
+然后在本项目根目录执行：
+
+```bash
+npm run inject
 ```
 
 ## 目录
