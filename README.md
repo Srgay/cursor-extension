@@ -9,6 +9,7 @@
 - 只在菜单里的精确 `MAX Mode` 行是 `aria-checked="true"` 时点击关闭。
 - 如果彩色 `MAX` 存在且聊天框有内容，显示 50px 红色渐变边框。
 - 同一条件下禁用 `.send-with-mode` 发送控件，并拦截点击发送和回车发送。
+- 脚本加载成功后，在 Cursor 右下角短暂显示 `Cursor Extension loaded`。
 
 ## 推荐方式：随 Cursor 启动加载
 
@@ -17,6 +18,8 @@ Patch Cursor 的 `workbench.html`，让脚本随 Cursor 启动加载：
 ```bash
 npm run patch
 ```
+
+Patch 会同步更新 Cursor `product.json` 里的 `workbench.html` checksum，避免 Cursor 把这次修改识别为安装损坏。
 
 然后完整退出 Cursor，再重新打开 Cursor。
 
@@ -44,6 +47,12 @@ Windows PowerShell:
 
 ```powershell
 $env:CURSOR_WORKBENCH_DIR="C:\Path\To\Cursor\resources\app\out\vs\code\electron-sandbox\workbench"
+npm run patch
+```
+
+如果 Windows 报 `EPERM: operation not permitted`，说明 Cursor 安装在 `C:\Program Files` 等受保护目录。请用管理员身份打开 PowerShell 后重新执行：
+
+```powershell
 npm run patch
 ```
 

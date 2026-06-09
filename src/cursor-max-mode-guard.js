@@ -11,7 +11,9 @@
     menuOpenCooldownMs: 1200,
     menuVerifyDelayMs: 180,
     verifiedOffTtlMs: 3000,
+    loadedToastMs: 4000,
     borderId: "cursor-max-input-warning-border",
+    loadedToastId: "cursor-max-mode-guard-loaded-toast",
     styleId: "cursor-max-input-warning-style",
   };
 
@@ -312,8 +314,57 @@
         opacity: .36 !important;
         filter: grayscale(1) !important;
       }
+
+      #${config.loadedToastId} {
+        position: fixed;
+        right: 16px;
+        bottom: 18px;
+        z-index: 2147483647;
+        max-width: min(360px, calc(100vw - 32px));
+        padding: 9px 12px;
+        border: 1px solid rgba(71, 207, 127, .45);
+        border-radius: 8px;
+        background: rgba(24, 28, 26, .92);
+        color: rgba(238, 255, 244, .96);
+        box-shadow: 0 8px 28px rgba(0, 0, 0, .28), inset 0 0 0 1px rgba(255, 255, 255, .04);
+        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: 0;
+        pointer-events: none;
+        opacity: 1;
+        transform: translateY(0);
+        transition: opacity .24s ease, transform .24s ease;
+      }
+
+      #${config.loadedToastId}[data-hiding="true"] {
+        opacity: 0;
+        transform: translateY(8px);
+      }
     `;
     document.documentElement.appendChild(style);
+  }
+
+  function showLoadedToast() {
+    ensureBorderStyle();
+
+    const existing = document.getElementById(config.loadedToastId);
+    if (existing) {
+      existing.remove();
+    }
+
+    const toast = document.createElement("div");
+    toast.id = config.loadedToastId;
+    toast.textContent = "Cursor Extension loaded";
+    document.documentElement.appendChild(toast);
+
+    const hideTimer = window.setTimeout(() => {
+      toast.setAttribute("data-hiding", "true");
+      const removeTimer = window.setTimeout(() => {
+        toast.remove();
+      }, 280);
+      state.timers.push(removeTimer);
+    }, config.loadedToastMs);
+
+    state.timers.push(hideTimer);
   }
 
   function setWarningBorder(on) {
@@ -424,6 +475,7 @@
     }
 
     setWarningBorder(false);
+    document.getElementById(config.loadedToastId)?.remove();
     for (const el of document.querySelectorAll("[data-cursor-max-send-disabled='true']")) {
       el.classList.remove("cursor-max-send-disabled");
       el.removeAttribute("aria-disabled");
@@ -461,6 +513,7 @@
     },
   };
 
+  showLoadedToast();
   scan();
   return window[NAME].status();
 })();

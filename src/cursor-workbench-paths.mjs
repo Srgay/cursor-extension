@@ -30,11 +30,15 @@ function defaultWorkbenchDir() {
 
 export function resolveWorkbenchPaths() {
   const workbenchDir = process.env.CURSOR_WORKBENCH_DIR || defaultWorkbenchDir();
+  const appRoot = resolve(workbenchDir, "../../../../..");
 
   return {
+    appRoot,
     workbenchDir,
     workbenchHtml: resolve(workbenchDir, "workbench.html"),
     guardTarget: resolve(workbenchDir, "cursor-max-mode-guard.js"),
     backupHtml: resolve(workbenchDir, "workbench.html.cursor-max-guard.bak"),
+    productJson: resolve(appRoot, "product.json"),
+    backupProductJson: resolve(appRoot, "product.json.cursor-max-guard.bak"),
   };
 }
