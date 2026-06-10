@@ -5,6 +5,8 @@ const {
   workbenchDir,
   workbenchHtml,
   guardTarget,
+  followupTarget,
+  imeFixTarget,
   backupHtml,
   productJson,
   backupProductJson,
@@ -12,6 +14,10 @@ const {
 
 const markerStart = "<!-- cursor-max-mode-guard:start -->";
 const markerEnd = "<!-- cursor-max-mode-guard:end -->";
+const followupMarkerStart = "<!-- cursor-mcp-followup:start -->";
+const followupMarkerEnd = "<!-- cursor-mcp-followup:end -->";
+const imeMarkerStart = "<!-- cursor-ime-enter-fix:start -->";
+const imeMarkerEnd = "<!-- cursor-ime-enter-fix:end -->";
 
 function explainPermissionError(error) {
   if (error && error.code === "EPERM" && process.platform === "win32") {
@@ -46,11 +52,18 @@ async function main() {
     await copyFile(backupHtml, workbenchHtml);
   } else {
     const html = await readFile(workbenchHtml, "utf8");
-    const pattern = new RegExp(`\\n?\\t?${markerStart}[\\s\\S]*?${markerEnd}`, "m");
-    await writeFile(workbenchHtml, html.replace(pattern, ""));
+    const guardPattern = new RegExp(`\\n?\\t?${markerStart}[\\s\\S]*?${markerEnd}`, "m");
+    const followupPattern = new RegExp(`\\n?\\t?${followupMarkerStart}[\\s\\S]*?${followupMarkerEnd}`, "m");
+    const imePattern = new RegExp(`\\n?\\t?${imeMarkerStart}[\\s\\S]*?${imeMarkerEnd}`, "m");
+    await writeFile(
+      workbenchHtml,
+      html.replace(guardPattern, "").replace(followupPattern, "").replace(imePattern, "")
+    );
   }
 
   await rm(guardTarget, { force: true });
+  await rm(followupTarget, { force: true });
+  await rm(imeFixTarget, { force: true });
 
   const backupProductJsonFound = await exists(backupProductJson);
   if (backupProductJsonFound) {
@@ -66,6 +79,8 @@ async function main() {
         workbenchHtml,
         backupHtmlFound: await exists(backupHtml),
         guardRemoved: guardTarget,
+        followupRemoved: followupTarget,
+        imeFixRemoved: imeFixTarget,
         productJson,
         backupProductJsonFound,
       },

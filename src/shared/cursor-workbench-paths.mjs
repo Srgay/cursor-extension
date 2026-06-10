@@ -37,6 +37,8 @@ export function resolveWorkbenchPaths() {
     workbenchDir,
     workbenchHtml: resolve(workbenchDir, "workbench.html"),
     guardTarget: resolve(workbenchDir, "cursor-max-mode-guard.js"),
+    followupTarget: resolve(workbenchDir, "cursor-mcp-followup.js"),
+    imeFixTarget: resolve(workbenchDir, "cursor-ime-enter-fix.js"),
     backupHtml: resolve(workbenchDir, "workbench.html.cursor-max-guard.bak"),
     productJson: resolve(appRoot, "product.json"),
     backupProductJson: resolve(appRoot, "product.json.cursor-max-guard.bak"),

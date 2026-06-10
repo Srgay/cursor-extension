@@ -1,13 +1,38 @@
 {
-  "name": "cursor-extension",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@srgay/cursor-extension",
+  "version": "1.0.0",
+  "description": "本机 Cursor workbench 增强：MAX Mode 守护、MCP Follow-up 面板、输入法回车修复（支持随 Cursor 启动持久加载，或 CDP 临时注入）。",
   "type": "module",
-  "description": "A local Cursor workbench extension for keeping MAX Mode off and blocking risky sends.",
+  "bin": {
+    "cursor-extension": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "check": "node --check src/cursor-max-mode-guard.js && node --check src/cursor-workbench-paths.mjs && node --check src/install-cursor-max-mode-guard.mjs && node --check src/patch-cursor-workbench.mjs && node --check src/unpatch-cursor-workbench.mjs",
-    "inject": "node src/install-cursor-max-mode-guard.mjs",
-    "patch": "node src/patch-cursor-workbench.mjs",
-    "unpatch": "node src/unpatch-cursor-workbench.mjs"
-  }
+    "check": "node --check src/max-mode-guard/cursor-max-mode-guard.js && node --check src/mcp-followup/cursor-mcp-followup.js && node --check src/ime-enter-fix/cursor-ime-enter-fix.js && node --check src/shared/cursor-workbench-paths.mjs && node --check src/max-mode-guard/install-cursor-max-mode-guard.mjs && node --check src/mcp-followup/install-cursor-mcp-followup.mjs && node --check src/ime-enter-fix/install-cursor-ime-enter-fix.mjs && node --check src/shared/patch-cursor-workbench.mjs && node --check src/shared/unpatch-cursor-workbench.mjs && node --check bin/cli.mjs",
+    "inject": "node src/max-mode-guard/install-cursor-max-mode-guard.mjs",
+    "inject:followup": "node src/mcp-followup/install-cursor-mcp-followup.mjs",
+    "inject:ime": "node src/ime-enter-fix/install-cursor-ime-enter-fix.mjs",
+    "patch": "node src/shared/patch-cursor-workbench.mjs",
+    "unpatch": "node src/shared/unpatch-cursor-workbench.mjs"
+  },
+  "keywords": [
+    "cursor",
+    "cursor-ide",
+    "workbench",
+    "mcp",
+    "mcp-feedback-enhanced",
+    "max-mode",
+    "ime",
+    "cli"
+  ],
+  "author": "srgay",
+  "license": "MIT"
 }
