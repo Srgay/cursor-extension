@@ -12,7 +12,8 @@
     reconnectMs: 3000,
     scanStart: 8765,
     scanCount: 5,
-    probeTimeoutMs: 1200,
+    probeTimeoutMs: 2500,
+    // 按需扫描：仅在「启动时」和「展开端口下拉框时」各扫一次，不做后台/持续扫描。
     customValue: "__custom__",
     lang: "zh-CN",
     // 发送场景重连成功（onopen）后，若服务端未及时推送会话状态，则等待此毫秒数后兜底直接发送。
@@ -40,8 +41,10 @@
     scanning: false,
     foundPorts: [],
     portProjects: {},
-    // 端口 → 完整 project_directory（扫描/会话时记录），用于把面板锁定到当前窗口项目对应的端口。
-    portPaths: {},
+    // 端口 → 窗口真实工作区路径 / 项目名（取自 server 进程的 WORKSPACE_FOLDER_PATHS / CURSOR_WORKSPACE_LABEL，
+    // 由 Cursor 注入、不受 AI 传入的 project_directory 影响），用于把面板锁定到「本窗口」对应的端口。
+    portWorkspaces: {},
+    portLabels: {},
     portStatuses: {},
     selectedStatus: null,
     expanded: false,
@@ -63,6 +66,9 @@
     // 输入法组字（拼音/注音等）进行中：此间回车用于上屏候选词，不应触发发送。
     composing: false,
     timers: [],
+    // 自定义端口下拉的文档级监听（点空白处 / Esc 关闭菜单），uninstall 时移除。
+    onDocPointerDown: null,
+    onDocKeydown: null,
   };
 
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -175,6 +181,45 @@
       #${config.panelId} .cmf-port:hover { background-color: var(--vscode-list-hoverBackground, rgba(228, 228, 228, .07)); }
       #${config.panelId} .cmf-port:focus { background-color: var(--vscode-list-hoverBackground, rgba(228, 228, 228, .07)); }
       #${config.panelId} .cmf-prompts { max-width: 170px; flex: 0 1 auto; }
+
+      /* 自定义端口下拉：触发按钮 + 浮层菜单（替代原生 <select>，以支持「点开→扫描→填充→展示」而不打断点选）。 */
+      #${config.panelId} .cmf-portwrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+      #${config.panelId} .cmf-portbtn {
+        appearance: none; -webkit-appearance: none;
+        height: 22px; padding: 0 20px 0 8px;
+        border-radius: 4px;
+        border: 1px solid transparent;
+        background-color: transparent;
+        background-image: url("${chevron}");
+        background-repeat: no-repeat;
+        background-position: right 5px center;
+        color: var(--vscode-descriptionForeground, rgba(228, 228, 228, .7));
+        font-family: inherit; font-size: 11.5px; cursor: pointer; outline: none;
+        white-space: nowrap;
+        transition: background-color .12s ease;
+      }
+      #${config.panelId} .cmf-portbtn:hover { background-color: var(--vscode-list-hoverBackground, rgba(228, 228, 228, .07)); }
+      #${config.panelId} .cmf-portbtn.open { background-color: var(--vscode-list-hoverBackground, rgba(228, 228, 228, .1)); }
+      #${config.panelId} .cmf-portmenu {
+        position: absolute; top: calc(100% + 4px); right: 0; z-index: 1000;
+        min-width: 100%; max-width: 300px; max-height: 240px; overflow-y: auto;
+        padding: 4px;
+        border: 1px solid var(--vscode-input-border, rgba(228, 228, 228, .18));
+        border-radius: 8px;
+        background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+        box-shadow: 0 6px 20px rgba(0, 0, 0, .32);
+      }
+      #${config.panelId} .cmf-opt {
+        display: block; white-space: nowrap;
+        padding: 4px 8px; border-radius: 5px;
+        font-size: 11.5px; line-height: 1.5;
+        color: var(--vscode-foreground, rgba(228, 228, 228, .9));
+        cursor: pointer;
+      }
+      #${config.panelId} .cmf-opt:hover { background: var(--vscode-list-hoverBackground, rgba(228, 228, 228, .1)); }
+      #${config.panelId} .cmf-opt.sel { color: var(--vscode-foreground, #fff); background: var(--vscode-list-activeSelectionBackground, rgba(129, 161, 193, .22)); }
+      #${config.panelId} .cmf-opt-custom { margin-top: 3px; padding-top: 6px; border-top: 1px solid var(--vscode-input-border, rgba(228, 228, 228, .12)); color: var(--vscode-descriptionForeground, rgba(228, 228, 228, .7)); }
+      #${config.panelId} .cmf-menuhint { display: flex; align-items: center; gap: 7px; padding: 6px 8px; font-size: 11.5px; color: var(--vscode-descriptionForeground, rgba(228, 228, 228, .65)); }
 
       #${config.panelId} .cmf-scan {
         flex: 0 0 auto;
@@ -433,9 +478,34 @@
   }
 
   function buildPanel() {
-    const portSelect = h("select", { class: "cmf-port", "aria-label": "选择 MCP 前端端口" });
+    // 隐藏的原生 <select> 仅作「数据载体」：继续承载当前选中 value 与 options 列表，
+    // 让 fillPortOptions / connectSelectedPort 等既有读写逻辑（els.portSelect.value）保持不变；
+    // 用户实际看到/交互的是下面的自定义触发按钮 + 浮层菜单（portBtn / portMenu）。
+    const portSelect = h("select", { class: "cmf-port", "aria-hidden": "true", tabindex: "-1" });
+    portSelect.style.display = "none";
     els.portSelect = portSelect;
     fillPortOptions(defaultPorts(), String(config.scanStart));
+
+    const portBtnText = h("span", { class: "cmf-portbtn-text" }, "Port " + config.scanStart);
+    const portBtn = h(
+      "button",
+      {
+        class: "cmf-portbtn",
+        type: "button",
+        "aria-haspopup": "listbox",
+        "aria-expanded": "false",
+        "aria-label": "选择 MCP 前端端口",
+        title: "选择 MCP 前端端口",
+      },
+      portBtnText
+    );
+    const portMenu = h("div", { class: "cmf-portmenu", role: "listbox" });
+    portMenu.style.display = "none";
+    const portWrap = h("div", { class: "cmf-portwrap" }, portBtn, portMenu, portSelect);
+    els.portBtn = portBtn;
+    els.portBtnText = portBtnText;
+    els.portMenu = portMenu;
+    els.portWrap = portWrap;
 
     const customInput = h("input", {
       class: "cmf-custom",
@@ -476,7 +546,7 @@
       status,
       h("span", { class: "cmf-spacer" }),
       scanBtn,
-      portSelect,
+      portWrap,
       customInput,
       projectName,
       gear
@@ -537,6 +607,7 @@
     // 状态文本已从面板移除；游离占位元素让现有状态写入成为无害空操作。
     els.hint = document.createElement("span");
 
+    updatePortButton();
     wireEvents();
   }
 
@@ -620,13 +691,41 @@
     }
   }
 
-  // 从一轮扫描结果里挑出 project_directory 与当前窗口工作区相等的端口（按项目锁定端口的核心优先级）。
+  // 在 server 进程里读「窗口真实工作区」的命令：WORKSPACE_FOLDER_PATHS / CURSOR_WORKSPACE_LABEL 由 Cursor 注入，
+  // 不受 AI 传入的 project_directory 影响。用单个 print 表达式（不含 ';'）+ chr(10) 分隔（不含 '|'），
+  // 规避服务端 _safe_parse_command 的危险子串过滤。
+  function buildWorkspaceProbeCmd() {
+    const code =
+      "print(__import__('os').environ.get('WORKSPACE_FOLDER_PATHS','')+chr(10)+__import__('os').environ.get('CURSOR_WORKSPACE_LABEL',''))";
+    return config.pyCmd + ' -c "' + code + '"';
+  }
+
+  // WORKSPACE_FOLDER_PATHS 可能含多个路径（多根工作区）；按常见分隔符拆开后看是否包含当前工作区。
+  function matchFolders(folders, ws) {
+    if (!folders || !ws) return false;
+    return String(folders)
+      .split(/[:;,\n]/)
+      .map((s) => normalizePath(s))
+      .filter(Boolean)
+      .includes(ws);
+  }
+
+  // 端口是否属于「当前窗口」：优先用 WORKSPACE_FOLDER_PATHS（完整路径），其次用 CURSOR_WORKSPACE_LABEL（项目名）。
+  function isPortMine(port, ws) {
+    if (!ws) return false;
+    if (matchFolders(state.portWorkspaces[port], ws)) return true;
+    const label = state.portLabels[port];
+    return !!(label && label === basename(ws));
+  }
+
+  // 从一轮扫描结果里挑出「属于当前窗口」的端口：主用 WORKSPACE_FOLDER_PATHS，次用 CURSOR_WORKSPACE_LABEL。
   function pickWorkspacePort(results) {
     const ws = getWorkspacePath();
     if (!ws) return null;
-    const hit = results.find(
-      (item) => item.alive && item.project && normalizePath(item.project) === ws
-    );
+    const wsLabel = basename(ws);
+    let hit = results.find((r) => r.alive && matchFolders(r.workspaceFolders, ws));
+    if (hit) return String(hit.port);
+    hit = results.find((r) => r.alive && r.workspaceLabel && r.workspaceLabel === wsLabel);
     return hit ? String(hit.port) : null;
   }
 
@@ -653,11 +752,93 @@
       const status = isSelected ? state.selectedStatus : state.portStatuses[option.value] || null;
       option.textContent = portText(option.value, status, state.expanded);
     }
+    updatePortButton();
   }
 
   function setOptionLabel(port, status) {
     if (String(port) === els.portSelect.value) state.selectedStatus = status;
     refreshOptionLabels();
+  }
+
+  // ———————————————————— 自定义端口下拉 ————————————————————
+  // 触发按钮文字 = 当前选中端口（带状态、不带项目名；项目名在右侧 projectName 单独显示）。
+  function updatePortButton() {
+    if (!els.portBtnText) return;
+    const cur = els.portSelect.value;
+    els.portBtnText.textContent =
+      cur === config.customValue ? "自定义端口…" : portText(cur, state.selectedStatus, false);
+  }
+
+  // 渲染浮层菜单：扫描中显示「扫描中…」，否则按最新 foundPorts 列出可用端口（带状态·项目名）+「自定义端口…」。
+  // 关键：菜单仅在「打开瞬间」与「扫描完成时」各渲染一次，渲染后保持稳定 —— 自定义 div 不会像原生 <select>
+  // 那样在用户点击瞬间因重建 DOM 而打断点选，因此点选即时生效、无打断、无闪。
+  function renderPortMenu(opts) {
+    if (!els.portMenu) return;
+    const loading = !!(opts && opts.loading) || state.scanning;
+    clear(els.portMenu);
+    if (loading) {
+      els.portMenu.appendChild(
+        h(
+          "div",
+          { class: "cmf-menuhint" },
+          h("span", { class: "cmf-spinner", "aria-hidden": "true" }),
+          h("span", null, "扫描中…")
+        )
+      );
+      return;
+    }
+    const cur = els.portSelect.value;
+    const ports = state.foundPorts.length ? state.foundPorts.map(String) : defaultPorts();
+    for (const p of ports) {
+      const status = p === cur ? state.selectedStatus : state.portStatuses[p] || null;
+      const item = h("div", { class: "cmf-opt" + (p === cur ? " sel" : ""), role: "option" }, portText(p, status, true));
+      item.addEventListener("click", () => selectPort(p));
+      els.portMenu.appendChild(item);
+    }
+    const customItem = h("div", { class: "cmf-opt cmf-opt-custom", role: "option" }, "自定义端口…");
+    customItem.addEventListener("click", selectCustom);
+    els.portMenu.appendChild(customItem);
+  }
+
+  // 打开菜单：先显示「扫描中…」，按需扫一次，扫完用最新结果填充并展示（满足「先扫描→填充→再展示」）。
+  async function openPortMenu() {
+    if (state.expanded) return;
+    state.expanded = true;
+    els.portMenu.style.display = "";
+    els.portBtn.classList.add("open");
+    els.portBtn.setAttribute("aria-expanded", "true");
+    renderPortMenu({ loading: true });
+    await scanPorts({ refreshOnly: true });
+    if (state.expanded) renderPortMenu();
+  }
+
+  function closePortMenu() {
+    state.expanded = false;
+    if (els.portMenu) els.portMenu.style.display = "none";
+    if (els.portBtn) {
+      els.portBtn.classList.remove("open");
+      els.portBtn.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  function togglePortMenu() {
+    if (state.expanded) closePortMenu();
+    else openPortMenu();
+  }
+
+  // 点选某端口：写回隐藏 select 的 value，关菜单，刷新按钮，再走既有连接逻辑（onPortChange）。
+  function selectPort(port) {
+    els.portSelect.value = String(port);
+    closePortMenu();
+    updatePortButton();
+    onPortChange();
+  }
+
+  function selectCustom() {
+    els.portSelect.value = config.customValue;
+    closePortMenu();
+    updatePortButton();
+    onPortChange();
   }
 
   function deriveStatusLabel(info) {
@@ -722,7 +903,6 @@
 
     const project = basename(info && info.project_directory);
     if (project) state.portProjects[state.socketPort] = project;
-    if (info && info.project_directory) state.portPaths[state.socketPort] = info.project_directory;
     state.portStatuses[state.socketPort] = deriveStatusLabel(info);
 
     const status = info && info.status;
@@ -1251,6 +1431,10 @@
       let opened = false;
       let project = "";
       let statusLabel = "";
+      let workspaceFolders = "";
+      let workspaceLabel = "";
+      let cmdBuf = null;
+      let needCmd = false;
       let ws = null;
       const finish = (alive) => {
         if (done) return;
@@ -1264,13 +1448,24 @@
             /* noop */
           }
         }
-        resolve({ alive, project, statusLabel });
+        resolve({ alive, project, statusLabel, workspaceFolders, workspaceLabel });
       };
       const timer = window.setTimeout(() => finish(opened), timeoutMs);
       try {
         ws = new WebSocket("ws://127.0.0.1:" + port + "/ws?lang=" + config.lang);
         ws.onopen = () => {
           opened = true;
+          // 连上后用 run_command 读「窗口真实工作区」（不受 AI 传入的 project_directory 影响）。
+          // pyCmd 占位符未被注入替换时跳过，退回靠 session_info 仅识别项目名。
+          if (config.pyCmd.indexOf("__MCP_") !== 0) {
+            cmdBuf = "";
+            needCmd = true;
+            try {
+              ws.send(JSON.stringify({ type: "run_command", command: buildWorkspaceProbeCmd() }));
+            } catch (error) {
+              needCmd = false;
+            }
+          }
         };
         ws.onmessage = (event) => {
           try {
@@ -1279,6 +1474,21 @@
             if (info && info.project_directory) {
               project = info.project_directory;
               statusLabel = deriveStatusLabel(info);
+              // 没发探测命令时（占位符未替换），拿到会话即可结束。
+              if (!needCmd) finish(true);
+            }
+            if (data.type === "command_output") {
+              if (cmdBuf !== null) cmdBuf += data.output || "";
+            }
+            if (data.type === "command_complete" || data.type === "command_error") {
+              const raw = (cmdBuf || "").replace(/\r/g, "");
+              const nl = raw.indexOf("\n");
+              if (nl >= 0) {
+                workspaceFolders = raw.slice(0, nl).trim();
+                workspaceLabel = raw.slice(nl + 1).trim();
+              } else {
+                workspaceFolders = raw.trim();
+              }
               finish(true);
             }
           } catch (error) {
@@ -1293,7 +1503,8 @@
     });
   }
 
-  async function scanPorts() {
+  async function scanPorts(opts) {
+    const refreshOnly = !!(opts && opts.refreshOnly);
     if (state.scanning) return;
     state.scanning = true;
     if (els.scanBtn) {
@@ -1306,43 +1517,52 @@
     els.hint.textContent = "正在扫描端口 " + from + "–" + to + "…";
 
     const ports = defaultPorts();
+    // 跳过探测「当前已连接的健康端口」：probe 会另建连接抢占服务端的「最后连接」，从而把面板自己挤下线。
+    // 对已连端口直接用已知信息标记为活跃，保证下拉扫描/重扫不会断开当前会话。
+    const curPort =
+      state.socket && state.socket.readyState === WebSocket.OPEN ? String(state.socketPort) : null;
     const results = await Promise.all(
-      ports.map((port) =>
-        probePort(port, config.probeTimeoutMs).then((res) => ({
+      ports.map((port) => {
+        if (curPort && String(port) === curPort) {
+          return Promise.resolve({
+            port,
+            alive: true,
+            project: state.currentSession ? state.currentSession.project_directory : "",
+            statusLabel: state.portStatuses[port] || state.selectedStatus || "",
+            workspaceFolders: state.portWorkspaces[port] || "",
+            workspaceLabel: state.portLabels[port] || "",
+          });
+        }
+        return probePort(port, config.probeTimeoutMs).then((res) => ({
           port,
           alive: res.alive,
           project: res.project,
           statusLabel: res.statusLabel,
-        }))
-      )
+          workspaceFolders: res.workspaceFolders,
+          workspaceLabel: res.workspaceLabel,
+        }));
+      })
     );
     const found = [];
     for (const item of results) {
       if (item.alive) {
         found.push(item.port);
-        if (item.project) {
-          state.portProjects[item.port] = basename(item.project);
-          state.portPaths[item.port] = item.project;
-        } else {
-          delete state.portProjects[item.port];
-          delete state.portPaths[item.port];
-        }
+        if (item.project) state.portProjects[item.port] = basename(item.project);
+        else delete state.portProjects[item.port];
+        if (item.workspaceFolders) state.portWorkspaces[item.port] = item.workspaceFolders;
+        else delete state.portWorkspaces[item.port];
+        if (item.workspaceLabel) state.portLabels[item.port] = item.workspaceLabel;
+        else delete state.portLabels[item.port];
         if (item.statusLabel) state.portStatuses[item.port] = item.statusLabel;
         else delete state.portStatuses[item.port];
       } else {
         delete state.portProjects[item.port];
-        delete state.portPaths[item.port];
+        delete state.portWorkspaces[item.port];
+        delete state.portLabels[item.port];
         delete state.portStatuses[item.port];
       }
     }
     state.foundPorts = found;
-
-    const wasCustom = els.portSelect.value === config.customValue;
-    // 优先选中 project_directory 与当前窗口工作区相等的端口；取不到工作区或无匹配端口时维持原有选择
-    //（combo 降级），连接层再由 connectSelectedPort 守卫兜底，避免连到别的项目。
-    const preferred = pickWorkspacePort(results);
-    fillPortOptions(found, preferred || (wasCustom ? null : els.portSelect.value));
-    if (wasCustom && !preferred) els.portSelect.value = config.customValue;
 
     if (els.scanBtn) {
       els.scanBtn.classList.remove("scanning");
@@ -1353,6 +1573,20 @@
     els.hint.textContent = found.length
       ? "扫描完成：发现活跃端口 " + found.join("、") + "。"
       : "扫描完成：" + from + "–" + to + " 未发现活跃 MCP 端口。";
+
+    if (refreshOnly) {
+      // 自定义下拉：扫描结果已写入 state；菜单仍展开则用最新结果渲染一次浮层（渲染后保持稳定，
+      // 不会在用户点击瞬间重建 DOM，故点选即时生效、无打断、无闪）。
+      if (state.expanded) renderPortMenu();
+      return;
+    }
+
+    const wasCustom = els.portSelect.value === config.customValue;
+    // 优先选中 project_directory 与当前窗口工作区相等的端口；取不到工作区或无匹配端口时维持原有选择
+    //（combo 降级），连接层再由 connectSelectedPort 守卫兜底，避免连到别的项目。
+    const preferred = pickWorkspacePort(results);
+    fillPortOptions(found, preferred || (wasCustom ? null : els.portSelect.value));
+    if (wasCustom && !preferred) els.portSelect.value = config.customValue;
 
     // 探测会短暂抢占连接，扫描结束后立即重连选中端口抢回「最后连接」。
     if (els.portSelect.value !== config.customValue) connectSelectedPort(false);
@@ -1400,10 +1634,11 @@
     const port = els.portSelect.value;
     if (port === config.customValue) return;
 
-    // 守卫：能确定当前窗口项目、且该端口已知属于别的项目时不连接，
-    // 避免误连到其它项目或常驻 feedback 实例（等本项目端口出现后由 refreshTick 重扫接管）。
+    // 守卫：能确定当前窗口、且该端口已知属于别的窗口时不连接，
+    // 避免误连到其它窗口的实例或常驻 feedback 实例（等本窗口端口被识别后由 refreshTick 重扫接管）。
     const ws = getWorkspacePath();
-    if (ws && state.portPaths[port] && normalizePath(state.portPaths[port]) !== ws) {
+    const known = !!(state.portWorkspaces[port] || state.portLabels[port]);
+    if (ws && known && !isPortMine(port, ws)) {
       if (state.socket) {
         state.socket.onclose = null;
         state.socket.onerror = null;
@@ -1411,8 +1646,8 @@
         state.socket.close();
         state.socket = null;
       }
-      setOptionLabel(port, "other project");
-      setVisualState("offline", port + " 属于其它项目，等待本项目的 MCP 会话…");
+      setOptionLabel(port, "other window");
+      setVisualState("offline", port + " 属于其它窗口，等待本窗口的 MCP 会话…");
       return;
     }
 
@@ -1470,6 +1705,10 @@
 
       nextSocket.onerror = () => {
         if (seq !== state.connectSeq) return;
+        // 连接失败：端口很可能已关闭或换了端口（实例重启），清除其归属缓存，
+        // 让 refreshTick 退避重扫去发现新的本窗口端口，而不是一直重连这个死端口。
+        delete state.portWorkspaces[port];
+        delete state.portLabels[port];
         setOptionLabel(port, "offline");
         setVisualState("offline", port + " 连接失败，可能端口未启动或没有 MCP WebUI。");
       };
@@ -1501,17 +1740,22 @@
     if (els.customInput === document.activeElement) return;
     if (els.prompt === document.activeElement && els.prompt.value.trim()) return;
 
-    // 还没连到「本项目」端口时，定期重扫去发现它（scanPorts 会优先选中并连上）；
-    // 已在本项目端口（或取不到工作区时）则维持原有重连，持续保持「最后连接」。
-    const ws = getWorkspacePath();
-    if (ws) {
-      const cur = els.portSelect.value;
-      const onWorkspacePort = !!state.portPaths[cur] && normalizePath(state.portPaths[cur]) === ws;
-      if (!onWorkspacePort) {
-        scanPorts();
-        return;
+    // 不做后台扫描（扫描仅发生在启动时与下拉展开期间）。这里只保持连接：
+    // 已连且健康 → 发 heartbeat 维持「最后连接」；否则重连选中端口（守卫会拦掉别窗口端口；
+    // 端口已关时 onerror 会清归属并置 offline，等待用户展开下拉重新选择本窗口端口）。
+    if (
+      state.socket &&
+      state.socket.readyState === WebSocket.OPEN &&
+      state.socketPort === els.portSelect.value
+    ) {
+      try {
+        state.socket.send(JSON.stringify({ type: "heartbeat", timestamp: Date.now() }));
+      } catch (error) {
+        /* 发送失败则下个周期走重连 */
       }
+      return;
     }
+
     connectSelectedPort(true);
   }
 
@@ -1574,16 +1818,22 @@
   }
 
   function wireEvents() {
-    els.portSelect.addEventListener("change", onPortChange);
-    // 展开下拉前让所有项带上「状态 · 项目名」；收起后选中项去掉项目名（右侧已显示）。
-    els.portSelect.addEventListener("mousedown", () => {
-      state.expanded = true;
-      refreshOptionLabels();
+    // 自定义端口下拉：点按钮开/关；打开即「扫描中→填充→展示」；点选即时生效（见 selectPort / selectCustom）。
+    els.portBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      togglePortMenu();
     });
-    els.portSelect.addEventListener("blur", () => {
-      state.expanded = false;
-      refreshOptionLabels();
-    });
+    // 点击按钮与浮层之外的区域、或按 Esc 关闭菜单。
+    state.onDocPointerDown = (event) => {
+      if (!state.expanded) return;
+      if (els.portWrap && els.portWrap.contains(event.target)) return;
+      closePortMenu();
+    };
+    document.addEventListener("mousedown", state.onDocPointerDown, true);
+    state.onDocKeydown = (event) => {
+      if (state.expanded && event.key === "Escape") closePortMenu();
+    };
+    document.addEventListener("keydown", state.onDocKeydown, true);
     els.scanBtn.addEventListener("click", () => {
       scanPorts();
     });
@@ -1655,6 +1905,8 @@
 
   function uninstall() {
     cancelAutoSubmit();
+    if (state.onDocPointerDown) document.removeEventListener("mousedown", state.onDocPointerDown, true);
+    if (state.onDocKeydown) document.removeEventListener("keydown", state.onDocKeydown, true);
     for (const timer of state.timers) {
       window.clearInterval(timer);
     }
