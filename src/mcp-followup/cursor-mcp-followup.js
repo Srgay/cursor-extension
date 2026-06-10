@@ -40,6 +40,8 @@
     scanning: false,
     foundPorts: [],
     portProjects: {},
+    // 端口 → 完整 project_directory（扫描/会话时记录），用于把面板锁定到当前窗口项目对应的端口。
+    portPaths: {},
     portStatuses: {},
     selectedStatus: null,
     expanded: false,
@@ -597,6 +599,37 @@
     );
   }
 
+  // 路径规范化：统一分隔符并去掉尾部斜杠，便于和 session 的 project_directory 精确比较。
+  function normalizePath(dir) {
+    return String(dir || "")
+      .replace(/\\/g, "/")
+      .replace(/\/+$/, "");
+  }
+
+  // 当前 Cursor 窗口的工作区绝对路径，取自原生 window.vscode（无需额外注入信息）。
+  // 取不到（多根工作区 / 空窗口 / 接口缺失）时返回 null，调用方据此降级为原有端口选择逻辑。
+  function getWorkspacePath() {
+    try {
+      const ctx = window.vscode && window.vscode.context;
+      const cfg = ctx && typeof ctx.configuration === "function" ? ctx.configuration() : null;
+      const uri = cfg && cfg.workspace && cfg.workspace.uri;
+      const p = uri && (uri.path || uri.fsPath || uri._fsPath);
+      return p ? normalizePath(p) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  // 从一轮扫描结果里挑出 project_directory 与当前窗口工作区相等的端口（按项目锁定端口的核心优先级）。
+  function pickWorkspacePort(results) {
+    const ws = getWorkspacePath();
+    if (!ws) return null;
+    const hit = results.find(
+      (item) => item.alive && item.project && normalizePath(item.project) === ws
+    );
+    return hit ? String(hit.port) : null;
+  }
+
   // 选项文本：Port {port}[ · 状态][ · 项目名]（状态在前、项目在后）。
   // 下拉展开时所有项都带「状态 · 项目名」，便于按项目/状态区分端口；
   // 收起时框里显示的是「选中项」，为避免与右侧项目名重复，选中项收起时不带项目名。
@@ -689,6 +722,7 @@
 
     const project = basename(info && info.project_directory);
     if (project) state.portProjects[state.socketPort] = project;
+    if (info && info.project_directory) state.portPaths[state.socketPort] = info.project_directory;
     state.portStatuses[state.socketPort] = deriveStatusLabel(info);
 
     const status = info && info.status;
@@ -1286,20 +1320,29 @@
     for (const item of results) {
       if (item.alive) {
         found.push(item.port);
-        if (item.project) state.portProjects[item.port] = basename(item.project);
-        else delete state.portProjects[item.port];
+        if (item.project) {
+          state.portProjects[item.port] = basename(item.project);
+          state.portPaths[item.port] = item.project;
+        } else {
+          delete state.portProjects[item.port];
+          delete state.portPaths[item.port];
+        }
         if (item.statusLabel) state.portStatuses[item.port] = item.statusLabel;
         else delete state.portStatuses[item.port];
       } else {
         delete state.portProjects[item.port];
+        delete state.portPaths[item.port];
         delete state.portStatuses[item.port];
       }
     }
     state.foundPorts = found;
 
     const wasCustom = els.portSelect.value === config.customValue;
-    fillPortOptions(found, wasCustom ? null : els.portSelect.value);
-    if (wasCustom) els.portSelect.value = config.customValue;
+    // 优先选中 project_directory 与当前窗口工作区相等的端口；取不到工作区或无匹配端口时维持原有选择
+    //（combo 降级），连接层再由 connectSelectedPort 守卫兜底，避免连到别的项目。
+    const preferred = pickWorkspacePort(results);
+    fillPortOptions(found, preferred || (wasCustom ? null : els.portSelect.value));
+    if (wasCustom && !preferred) els.portSelect.value = config.customValue;
 
     if (els.scanBtn) {
       els.scanBtn.classList.remove("scanning");
@@ -1356,6 +1399,23 @@
   function connectSelectedPort(auto) {
     const port = els.portSelect.value;
     if (port === config.customValue) return;
+
+    // 守卫：能确定当前窗口项目、且该端口已知属于别的项目时不连接，
+    // 避免误连到其它项目或常驻 feedback 实例（等本项目端口出现后由 refreshTick 重扫接管）。
+    const ws = getWorkspacePath();
+    if (ws && state.portPaths[port] && normalizePath(state.portPaths[port]) !== ws) {
+      if (state.socket) {
+        state.socket.onclose = null;
+        state.socket.onerror = null;
+        state.socket.onmessage = null;
+        state.socket.close();
+        state.socket = null;
+      }
+      setOptionLabel(port, "other project");
+      setVisualState("offline", port + " 属于其它项目，等待本项目的 MCP 会话…");
+      return;
+    }
+
     const seq = ++state.connectSeq;
 
     if (state.socket) {
@@ -1440,6 +1500,18 @@
     if (els.portSelect.value === config.customValue) return;
     if (els.customInput === document.activeElement) return;
     if (els.prompt === document.activeElement && els.prompt.value.trim()) return;
+
+    // 还没连到「本项目」端口时，定期重扫去发现它（scanPorts 会优先选中并连上）；
+    // 已在本项目端口（或取不到工作区时）则维持原有重连，持续保持「最后连接」。
+    const ws = getWorkspacePath();
+    if (ws) {
+      const cur = els.portSelect.value;
+      const onWorkspacePort = !!state.portPaths[cur] && normalizePath(state.portPaths[cur]) === ws;
+      if (!onWorkspacePort) {
+        scanPorts();
+        return;
+      }
+    }
     connectSelectedPort(true);
   }
 
