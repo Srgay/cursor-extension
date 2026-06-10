@@ -391,6 +391,18 @@
     refreshOptionLabels();
   }
 
+  // 确保隐藏 select（数据载体）里存在某端口的 option。自定义浮层用 foundPorts 渲染，
+  // 但隐藏 select 只在全量扫描时重填；按需扫描新发现的端口必须补进来，否则给原生
+  // <select> 设一个不存在的 value 会被静默置空 → 连空端口 offline。
+  function ensurePortOption(value) {
+    if (!els.portSelect) return;
+    const v = String(value);
+    const opts = Array.from(els.portSelect.options);
+    if (opts.some((o) => o.value === v)) return;
+    const custom = opts.find((o) => o.value === config.customValue);
+    els.portSelect.insertBefore(h("option", { value: v }), custom || null);
+  }
+
   function makeScanIcon() {
     const svg = svgEl("svg", { viewBox: "0 0 24 24", fill: "none", "aria-hidden": "true" });
     svg.appendChild(svgEl("circle", { cx: "11", cy: "11", r: "6", stroke: "currentColor", "stroke-width": "2" }));
@@ -828,7 +840,11 @@
 
   // 点选某端口：写回隐藏 select 的 value，关菜单，刷新按钮，再走既有连接逻辑（onPortChange）。
   function selectPort(port) {
-    els.portSelect.value = String(port);
+    const v = String(port);
+    // 关键：浮层从 foundPorts 渲染，可能领先于隐藏 select 的 options；先补齐再赋值，
+    // 否则原生 <select> 对不存在的 value 会静默置空，导致连空端口 → offline。
+    ensurePortOption(v);
+    els.portSelect.value = v;
     closePortMenu();
     updatePortButton();
     onPortChange();
@@ -1575,8 +1591,9 @@
       : "扫描完成：" + from + "–" + to + " 未发现活跃 MCP 端口。";
 
     if (refreshOnly) {
-      // 自定义下拉：扫描结果已写入 state；菜单仍展开则用最新结果渲染一次浮层（渲染后保持稳定，
-      // 不会在用户点击瞬间重建 DOM，故点选即时生效、无打断、无闪）。
+      // 自定义下拉：先把本次扫到的端口补进隐藏 select（数据载体），保证点选时 value 设得上；
+      // 菜单仍展开则用最新结果渲染浮层（渲染后保持稳定，点选即时生效、无打断、无闪）。
+      found.forEach((p) => ensurePortOption(String(p)));
       if (state.expanded) renderPortMenu();
       return;
     }
