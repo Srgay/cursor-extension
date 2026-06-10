@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyMcpFollowupReplacements } from "../shared/mcp-settings.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.CURSOR_DEBUG_PORT || "9222");
@@ -69,10 +69,9 @@ if (!target) {
   );
 }
 
-// 面板运行在浏览器环境（无 fs），改用 WS run_command 读取常用提示词；
-// 这里在 Node 侧把占位符替换成 ui_settings.json 的真实绝对路径（shell=False 下 ~ 不展开）。
-const settingsPath = join(homedir(), ".config", "mcp-feedback-enhanced", "ui_settings.json");
-const source = (await readFile(sourcePath, "utf8")).replace("__MCP_SETTINGS_PATH__", settingsPath);
+// 面板运行在浏览器环境（无 fs），改用 WS run_command 读写 ui_settings.json；
+// 这里在 Node 侧按平台把占位符替换成真实路径与命令（Windows 用正斜杠 + python，详见 shared/mcp-settings.mjs）。
+const source = applyMcpFollowupReplacements(await readFile(sourcePath, "utf8"));
 const client = connect(target.webSocketDebuggerUrl);
 
 await client.opened;

@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyMcpFollowupReplacements, buildMcpFollowupReplacements } from "./mcp-settings.mjs";
 import { resolveWorkbenchPaths } from "./cursor-workbench-paths.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -10,8 +10,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const guardSource = resolve(__dirname, "../max-mode-guard/cursor-max-mode-guard.js");
 const followupSource = resolve(__dirname, "../mcp-followup/cursor-mcp-followup.js");
 const imeFixSource = resolve(__dirname, "../ime-enter-fix/cursor-ime-enter-fix.js");
-// 面板在浏览器环境无 fs，靠 WS run_command 读取 ui_settings.json；patch 时把占位符替换成真实绝对路径。
-const settingsPath = join(homedir(), ".config", "mcp-feedback-enhanced", "ui_settings.json");
+// 面板在浏览器环境无 fs，靠 WS run_command 读写 ui_settings.json；settingsPath 仅用于下方日志输出。
+const { settingsPath } = buildMcpFollowupReplacements();
 const {
   workbenchDir,
   workbenchHtml,
@@ -113,8 +113,8 @@ async function main() {
 
   await copyFile(guardSource, guardTarget);
 
-  // MCP 面板：不是单纯拷贝，需把 __MCP_SETTINGS_PATH__ 占位符替换成真实路径后再写入。
-  const followupCode = (await readFile(followupSource, "utf8")).replace("__MCP_SETTINGS_PATH__", settingsPath);
+  // MCP 面板：不是单纯拷贝，需按平台把占位符（路径/命令）替换后再写入。
+  const followupCode = applyMcpFollowupReplacements(await readFile(followupSource, "utf8"));
   await writeFile(followupTarget, followupCode);
 
   // 输入法回车修复：无占位符，直接拷贝。

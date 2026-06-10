@@ -16,7 +16,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "check": "node --check src/max-mode-guard/cursor-max-mode-guard.js && node --check src/mcp-followup/cursor-mcp-followup.js && node --check src/ime-enter-fix/cursor-ime-enter-fix.js && node --check src/shared/cursor-workbench-paths.mjs && node --check src/max-mode-guard/install-cursor-max-mode-guard.mjs && node --check src/mcp-followup/install-cursor-mcp-followup.mjs && node --check src/ime-enter-fix/install-cursor-ime-enter-fix.mjs && node --check src/shared/patch-cursor-workbench.mjs && node --check src/shared/unpatch-cursor-workbench.mjs && node --check bin/cli.mjs",
+    "check": "node --check src/max-mode-guard/cursor-max-mode-guard.js && node --check src/mcp-followup/cursor-mcp-followup.js && node --check src/ime-enter-fix/cursor-ime-enter-fix.js && node --check src/shared/cursor-workbench-paths.mjs && node --check src/shared/mcp-settings.mjs && node --check src/max-mode-guard/install-cursor-max-mode-guard.mjs && node --check src/mcp-followup/install-cursor-mcp-followup.mjs && node --check src/ime-enter-fix/install-cursor-ime-enter-fix.mjs && node --check src/shared/patch-cursor-workbench.mjs && node --check src/shared/unpatch-cursor-workbench.mjs && node --check bin/cli.mjs",
     "inject": "node src/max-mode-guard/install-cursor-max-mode-guard.mjs",
     "inject:followup": "node src/mcp-followup/install-cursor-mcp-followup.mjs",
     "inject:ime": "node src/ime-enter-fix/install-cursor-ime-enter-fix.mjs",

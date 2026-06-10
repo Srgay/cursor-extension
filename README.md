@@ -29,6 +29,7 @@ npx @srgay/cursor-extension help
 - Cursor 更新可能覆盖 `workbench.html`，功能失效时重新执行 `install`。
 - 自定义 Cursor 安装目录：设置环境变量 `CURSOR_WORKBENCH_DIR`。
 - `inject` 自定义调试端口：设置环境变量 `CURSOR_DEBUG_PORT`（默认 `9222`）。
+- MCP 面板配置读写所用的 python 命令：默认按平台自动探测（`python` / `py` / `python3`），可用环境变量 `CURSOR_MCP_PYTHON` 强制指定（某些 Windows 环境用得上）。
 
 > 说明：下文「推荐方式 / 备用方式」里的 `npm run patch`、`npm run inject` 等是**本仓库源码开发**用法；最终用户用上面的 `npx` 命令即可，二者等价。
 
@@ -52,10 +53,10 @@ npm run patch
 Patch 行为：
 
 - 注入 `<script src="./cursor-max-mode-guard.js">`、`<script src="./cursor-mcp-followup.js">`、`<script src="./cursor-ime-enter-fix.js">` 到 `workbench.html`（各自带注释标记，便于幂等与回退）。
-- 把 `cursor-mcp-followup.js` 拷入 workbench 目录时，将其中的 `__MCP_SETTINGS_PATH__` 占位符替换为本机真实路径 `~/.config/mcp-feedback-enhanced/ui_settings.json`（面板借 WS `run_command` 读写该文件，实现常用提示词与自动提交配置的查看/编辑）。
+- 把 `cursor-mcp-followup.js` 拷入 workbench 目录时，按当前系统替换其中的路径/命令占位符：配置路径 `~/.config/mcp-feedback-enhanced/ui_settings.json`（Windows 为 `C:/Users/<你>/.config/...`，统一用正斜杠），以及读取命令（Mac/Linux 用 `cat`、Windows 用 `python -X utf8` 读取）与写入用的 python 命令名（面板借 WS `run_command` 读写该文件，实现常用提示词与自动提交配置的查看/编辑）。
 - 同步更新 Cursor `product.json` 里的 `workbench.html` checksum，避免 Cursor 把这次修改识别为安装损坏。
 
-> 注意：占位符在 patch 时按当前用户主目录写死。若更换用户/主目录，重新执行 `npm run patch`。
+> 注意：占位符在 patch 时按当前用户主目录与操作系统写死。若更换用户/主目录或操作系统，重新执行 `npm run patch`。
 
 然后完整退出 Cursor，再重新打开 Cursor。
 
@@ -123,7 +124,7 @@ npm run inject
   - **常用提示词**增删改（写回 `ui_settings.json`，删除带二次确认）。
   - **自动提交**配置：启用开关、超时（秒）、选择提示词，状态实时回显。
   - **自动提交运行时**：仅在「等待反馈」时倒计时，输入框右侧显示 `自动提交 m:ss` 小标签；到点自动以所选提示词发送（走与手动一致的重连抢占）。用户输入/手动插入提示词/手动发送/点击倒计时/会话离开等待态，本轮即取消自动提交。
-- 配置读写均借现有 WebSocket 的 `run_command` 完成（读 `cat`、写 `python3` base64 解码落盘），不依赖本地文件系统访问或 CORS。
+- 配置读写均借现有 WebSocket 的 `run_command` 完成（Mac/Linux 读用 `cat`，Windows 读用 `python -X utf8`；写入两平台都用 python base64 解码落盘），不依赖本地文件系统访问或 CORS。服务端以 `shell=False` + `shlex.split` 执行命令，故 Windows 路径统一用正斜杠以规避转义。
 
 ### 加载方式
 
@@ -140,7 +141,7 @@ open -na /Applications/Cursor.app --args --remote-debugging-port=9222
 npm run inject:followup
 ```
 
-> CDP 注入是临时的，**重启 Cursor 后需要重新执行**；`install-cursor-mcp-followup.mjs` 会在注入时替换 `__MCP_SETTINGS_PATH__` 占位符。
+> CDP 注入是临时的，**重启 Cursor 后需要重新执行**；`install-cursor-mcp-followup.mjs` 会在注入时按平台替换路径/命令占位符（详见 `src/shared/mcp-settings.mjs`）。
 
 ### 端口扫描与自定义
 
@@ -220,6 +221,7 @@ window.__cursorImeEnterFix.uninstall() // 卸载
   - `install-cursor-ime-enter-fix.mjs`: 通过 CDP 临时注入输入法回车修复。
 - `src/shared/` — 共享工具
   - `cursor-workbench-paths.mjs`: macOS/Windows workbench 路径解析。
+  - `mcp-settings.mjs`: 按平台生成 MCP 面板的配置路径与读/写命令（探测 python，Windows 用正斜杠）。
   - `patch-cursor-workbench.mjs`: patch Cursor 的 `workbench.html`（注入全部三个脚本）。
   - `unpatch-cursor-workbench.mjs`: 恢复 patch。
 

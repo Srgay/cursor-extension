@@ -17,9 +17,13 @@
     lang: "zh-CN",
     // 发送场景重连成功（onopen）后，若服务端未及时推送会话状态，则等待此毫秒数后兜底直接发送。
     sendAfterOpenMs: 350,
-    // 常用提示词所在 ui_settings.json 的绝对路径；注入脚本会用真实 home 路径替换此占位符。
-    // 面板借道现有 WS 的 run_command（cat 该文件）拉取提示词，不读本地 fs、不依赖 CORS。
+    // 常用提示词所在 ui_settings.json 的绝对路径；注入脚本会按平台替换此占位符（Windows 用正斜杠）。
+    // 面板借道现有 WS 的 run_command 读写该文件，不读本地 fs、不依赖 CORS。
     settingsPath: "__MCP_SETTINGS_PATH__",
+    // 读取配置的完整命令：Mac/Linux 为 `cat <path>`，Windows 为 python UTF-8 读取（注入时按平台生成）。
+    readCmd: "__MCP_READ_CMD__",
+    // 写回配置时使用的 python 命令名（注入时探测：python / py / python3）。
+    pyCmd: "__MCP_PY__",
     // run_command 拉取提示词的兜底超时（毫秒）。
     promptLoadTimeoutMs: 4000,
   };
@@ -763,8 +767,8 @@
     state.cmdBuffer = "";
     if (els.promptRefresh) els.promptRefresh.classList.add("scanning");
     try {
-      // shell=False，路径无空格，直接传绝对路径即可（~ 不会被展开）。
-      state.socket.send(JSON.stringify({ type: "run_command", command: "cat " + config.settingsPath }));
+      // 读取命令由注入脚本按平台生成（Mac/Linux: cat；Windows: python -X utf8 读取）。
+      state.socket.send(JSON.stringify({ type: "run_command", command: config.readCmd }));
     } catch (error) {
       state.loadingPrompts = false;
       state.cmdBuffer = null;
@@ -836,7 +840,7 @@
         "').write_bytes(__import__('base64').b64decode('" +
         b64 +
         "'))";
-      command = 'python3 -c "' + py + '"';
+      command = config.pyCmd + ' -c "' + py + '"';
       const lower = command.toLowerCase();
       safe = dangerous.every((p) => lower.indexOf(p) === -1);
       if (!safe) payload += "\n";
