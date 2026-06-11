@@ -9,7 +9,7 @@
     styleId: "cursor-mcp-followup-style",
     panelId: "cursor-mcp-followup-panel",
     mountScanMs: 600,
-    reconnectMs: 3000,
+    reconnectMs: 8000,
     scanStart: 8765,
     scanCount: 5,
     probeTimeoutMs: 2500,
@@ -1748,18 +1748,16 @@
     }
   }
 
-  // 服务端是「最后连接优先」模型：每个连接绑定其建立时的 session，且只向最后连接推送。
-  // 因此面板必须持续保持为「最后连接」，否则会收不到新会话、提交也会作用到已失效的旧会话。
-  // 定期重连以抢占活跃连接并同步当前会话；仅在用户正在输入时不打断（输入期间一般无其他端抢占）。
+  // 定期探测当前 WebSocket 是否仍存活。这里不主动重连，避免周期性关闭/新建连接扰动
+  // Cursor renderer 和 MCP 服务端的「最后连接」状态；重连只在启动、手动切端口、聚焦输入框或发送前触发。
   function refreshTick() {
     if (state.scanning) return;
     if (els.portSelect.value === config.customValue) return;
     if (els.customInput === document.activeElement) return;
     if (els.prompt === document.activeElement && els.prompt.value.trim()) return;
 
-    // 不做后台扫描（扫描仅发生在启动时与下拉展开期间）。这里只保持连接：
-    // 已连且健康 → 发 heartbeat 维持「最后连接」；否则重连选中端口（守卫会拦掉别窗口端口；
-    // 端口已关时 onerror 会清归属并置 offline，等待用户展开下拉重新选择本窗口端口）。
+    // 不做后台扫描（扫描仅发生在启动时与下拉展开期间），也不做周期性重连。
+    // OPEN → 发 heartbeat 探活；CONNECTING → 等待；其它状态 → 标记离线，等待用户操作触发连接。
     if (
       state.socket &&
       state.socket.readyState === WebSocket.OPEN &&
@@ -1768,12 +1766,22 @@
       try {
         state.socket.send(JSON.stringify({ type: "heartbeat", timestamp: Date.now() }));
       } catch (error) {
-        /* 发送失败则下个周期走重连 */
+        setOptionLabel(els.portSelect.value, "offline");
+        setVisualState("offline", els.portSelect.value + " WebSocket heartbeat 发送失败。");
       }
       return;
     }
 
-    connectSelectedPort(true);
+    if (
+      state.socket &&
+      state.socket.readyState === WebSocket.CONNECTING &&
+      state.socketPort === els.portSelect.value
+    ) {
+      return;
+    }
+
+    setOptionLabel(els.portSelect.value, "offline");
+    setVisualState("offline", els.portSelect.value + " WebSocket 未连接或已断开。");
   }
 
   function autoResize() {

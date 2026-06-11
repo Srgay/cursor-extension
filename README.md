@@ -178,7 +178,7 @@ window.__cursorMcpFollowup.uninstall()    // 卸载面板
 
 - `scanStart` / `scanCount`：扫描起始端口与数量（默认从 `8765` 起、共 `5` 个，即 `8765–8769`）。
 - `probeTimeoutMs`：单端口探测超时（默认 `2500` ms；含一次 `run_command` 读取窗口工作区的往返）。
-- `reconnectMs`：自动重连间隔（默认 `3000` ms）。
+- `reconnectMs`：WebSocket 存活探测间隔（默认 `8000` ms；不做周期性重连）。
 
 ### 排障
 
