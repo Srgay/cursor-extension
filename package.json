@@ -1,6 +1,6 @@
 {
   "name": "@srgay/cursor-extension",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "本机 Cursor workbench 增强：MAX Mode 守护、MCP Follow-up 面板、输入法回车修复（支持随 Cursor 启动持久加载，或 CDP 临时注入）。",
   "type": "module",
   "bin": {

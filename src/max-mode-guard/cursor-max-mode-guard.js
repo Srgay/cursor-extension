@@ -6,8 +6,8 @@
   }
 
   const config = {
-    scanMs: 300,
-    sendDisableMs: 100,
+    scanMs: 1000,
+    sendDisableMs: 1000,
     menuOpenCooldownMs: 1200,
     menuVerifyDelayMs: 180,
     verifiedOffTtlMs: 3000,
