@@ -27,6 +27,9 @@
     pyCmd: "__MCP_PY__",
     // run_command 拉取提示词的兜底超时（毫秒）。
     promptLoadTimeoutMs: 4000,
+    // onclose 断开后「自动重扫一次」的最小间隔（毫秒）。仅用于事件驱动的防抖，
+    // 防止「连不上→断开→再扫」抖动成风暴；不是后台定时轮询。
+    autoRescanMinGapMs: 4000,
   };
 
   const state = {
@@ -69,6 +72,10 @@
     // 自定义端口下拉的文档级监听（点空白处 / Esc 关闭菜单），uninstall 时移除。
     onDocPointerDown: null,
     onDocKeydown: null,
+    // 上次扫描的时间戳，供 onclose 断开后的「防抖自动重扫」判断间隔（事件驱动，非定时）。
+    lastAutoScanAt: 0,
+    // 正在对某端口做「守卫拒绝前的归属复核」探测，避免对同一端口重复探测。
+    revalidating: null,
   };
 
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -1523,6 +1530,7 @@
     const refreshOnly = !!(opts && opts.refreshOnly);
     if (state.scanning) return;
     state.scanning = true;
+    state.lastAutoScanAt = Date.now();
     if (els.scanBtn) {
       els.scanBtn.classList.add("scanning");
       els.scanBtn.disabled = true;
@@ -1647,12 +1655,41 @@
     }
   }
 
+  // ③ 断开后「自动重扫一次」：事件驱动 + 防抖（非定时轮询）。借扫描重新探测各端口归属、
+  // 刷新缓存并连回本窗口端口；防抖避免「连不上→断开→再扫」反复抖动成风暴。
+  function autoRescan() {
+    if (state.scanning) return;
+    if (els.portSelect.value === config.customValue) return;
+    if (Date.now() - state.lastAutoScanAt < config.autoRescanMinGapMs) return;
+    scanPorts();
+  }
+
+  // ④ 守卫判定「别的窗口」后，不全信可能过时的缓存：对该端口做一次性探测复核真实归属，
+  // 刷新缓存；仅当探测确认「确属本窗口」时才重连，否则保持离线等待（不轮询）。
+  function revalidatePortOwnership(port, ws) {
+    const key = String(port);
+    if (state.revalidating === key) return;
+    state.revalidating = key;
+    probePort(key, config.probeTimeoutMs).then((res) => {
+      if (state.revalidating === key) state.revalidating = null;
+      if (res.workspaceFolders) state.portWorkspaces[key] = res.workspaceFolders;
+      else delete state.portWorkspaces[key];
+      if (res.workspaceLabel) state.portLabels[key] = res.workspaceLabel;
+      else delete state.portLabels[key];
+      // 用户没切走端口、探测存活且复核后确属本窗口，才连接（连接层会再次走守卫兜底）。
+      if (els.portSelect.value === key && res.alive && isPortMine(key, ws)) {
+        connectSelectedPort(false);
+      }
+    });
+  }
+
   function connectSelectedPort(auto) {
     const port = els.portSelect.value;
     if (port === config.customValue) return;
 
     // 守卫：能确定当前窗口、且该端口已知属于别的窗口时不连接，
-    // 避免误连到其它窗口的实例或常驻 feedback 实例（等本窗口端口被识别后由 refreshTick 重扫接管）。
+    // 避免误连到其它窗口的实例或常驻 feedback 实例（随后由 revalidatePortOwnership 探测复核，
+    // 若该端口已换回本窗口则立刻重连接管）。
     const ws = getWorkspacePath();
     const known = !!(state.portWorkspaces[port] || state.portLabels[port]);
     if (ws && known && !isPortMine(port, ws)) {
@@ -1665,6 +1702,9 @@
       }
       setOptionLabel(port, "other window");
       setVisualState("offline", port + " 属于其它窗口，等待本窗口的 MCP 会话…");
+      // ④ 缓存可能已过时（如该端口刚换回本窗口）：异步探测复核，确属本窗口则立刻重连，
+      // 避免「端口已是自己的、却被 stale 缓存永久判为别人的」而连不上。
+      revalidatePortOwnership(port, ws);
       return;
     }
 
@@ -1734,6 +1774,12 @@
         if (seq !== state.connectSeq) return;
         state.socket = null;
         if (state.currentState === "processing") return;
+        // ① 非 4004 的断开意味着端口可能已关闭/换主：清除该端口归属缓存，从根上消除 stale，
+        //   避免下次连接被过时归属（守卫）误判。4004 是「连上了但无会话」，端口归属仍有效，不清。
+        if (event.code !== 4004) {
+          delete state.portWorkspaces[port];
+          delete state.portLabels[port];
+        }
         setOptionLabel(port, event.code === 4004 ? "no session" : "offline");
         setVisualState(
           "offline",
@@ -1741,6 +1787,8 @@
             ? port + " 已连接到 MCP，但当前没有 active session。"
             : port + " WebSocket 已断开。"
         );
+        // ③ 断开后自动重扫一次（事件驱动 + 防抖）：刷新各端口归属并连回本窗口端口；不聚焦也能自愈。
+        if (event.code !== 4004) autoRescan();
       };
     } catch (error) {
       setOptionLabel(port, "offline");
@@ -1908,7 +1956,11 @@
       suppressAutoSubmit();
     });
     els.prompt.addEventListener("focus", () => {
-      if (els.portSelect.value !== config.customValue) connectSelectedPort(true);
+      if (els.portSelect.value === config.customValue) return;
+      // ② 离线时聚焦：缓存可能过时导致守卫挡住直连，改为重扫一次刷新各端口归属并连回本窗口端口
+      //   （事件驱动 + 防抖）；非离线仍走原「重连抢回最后连接」逻辑。
+      if (state.currentState === "offline") autoRescan();
+      else connectSelectedPort(true);
     });
     // 跟踪输入法组字状态：组字期间（含上屏候选词的回车）不触发发送。
     els.prompt.addEventListener("compositionstart", () => {
