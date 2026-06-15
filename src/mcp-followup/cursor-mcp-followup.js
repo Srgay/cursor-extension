@@ -690,10 +690,27 @@
   }
 
   // 路径规范化：统一分隔符并去掉尾部斜杠，便于和 session 的 project_directory 精确比较。
+  // Windows 额外处理：去掉 file URI 的前导斜杠（/C:/… → C:/…）并统一盘符大小写（Windows 大小写不敏感），
+  // 使 Cursor 的 uri.path（/c:/…）能与 env 的 C:\… 对上；POSIX 路径不含盘符，不受影响。
   function normalizePath(dir) {
-    return String(dir || "")
+    let p = String(dir || "")
       .replace(/\\/g, "/")
       .replace(/\/+$/, "");
+    p = p.replace(/^\/([A-Za-z]:)/, "$1");
+    if (/^[A-Za-z]:/.test(p)) p = p.charAt(0).toLowerCase() + p.slice(1);
+    return p;
+  }
+
+  // 拆分 WORKSPACE_FOLDER_PATHS（可能含多根工作区）。关键：Windows 路径含盘符冒号（C:\…），不能按 ':' 切，
+  // 且多根按 os.pathsep 用 ';' 分隔；POSIX 多根用 ':' 分隔。按路径形态判定平台，避免把盘符 'C:' 切坏。
+  function splitFolders(folders) {
+    const s = String(folders || "");
+    // 盘符只在「串首」或「分隔符 ; 之后」才算 Windows（避免 POSIX 多路径 /a/b:/c/d 里的 b:/ 被误判）。
+    const isWin = /^\s*[A-Za-z]:[\\/]/.test(s) || /[;,\n]\s*[A-Za-z]:[\\/]/.test(s) || s.indexOf("\\") >= 0;
+    return s
+      .split(isWin ? /[;\n,]+/ : /[:;\n,]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
   }
 
   // 当前 Cursor 窗口的工作区绝对路径，取自原生 window.vscode（无需额外注入信息）。
@@ -722,8 +739,7 @@
   // WORKSPACE_FOLDER_PATHS 可能含多个路径（多根工作区）；按常见分隔符拆开后看是否包含当前工作区。
   function matchFolders(folders, ws) {
     if (!folders || !ws) return false;
-    return String(folders)
-      .split(/[:;,\n]/)
+    return splitFolders(folders)
       .map((s) => normalizePath(s))
       .filter(Boolean)
       .includes(ws);
@@ -748,6 +764,19 @@
     return hit ? String(hit.port) : null;
   }
 
+  // 端口对应窗口的「真实工作区名」：取自 Cursor 注入到该端口 MCP 服务进程的 WORKSPACE_FOLDER_PATHS
+  // （多根工作区取第一个），次选 CURSOR_WORKSPACE_LABEL。两者均来自 env、不受 AI 传入的
+  // project_directory 影响，是判断「端口属于哪个窗口/项目」最可信的来源；取不到时返回空串。
+  function portWorkspaceName(port) {
+    const key = String(port);
+    const folders = state.portWorkspaces[key];
+    if (folders) {
+      const name = basename(splitFolders(folders)[0]);
+      if (name) return name;
+    }
+    return state.portLabels[key] || "";
+  }
+
   // 选项文本：Port {port}[ · 状态][ · 项目名]（状态在前、项目在后）。
   // 下拉展开时所有项都带「状态 · 项目名」，便于按项目/状态区分端口；
   // 收起时框里显示的是「选中项」，为避免与右侧项目名重复，选中项收起时不带项目名。
@@ -755,7 +784,8 @@
     let text = "Port " + port;
     if (status) text += " · " + status;
     if (withProject) {
-      const project = state.portProjects[String(port)];
+      // 项目名优先用 env 的真实工作区名（WORKSPACE_FOLDER_PATHS），取不到才回退 AI 会话的 project_directory。
+      const project = portWorkspaceName(port) || state.portProjects[String(port)];
       if (project) text += " · " + project;
     }
     return text;
@@ -874,14 +904,17 @@
   }
 
   function sessionTitle(data) {
-    const name = basename(data && data.project_directory);
+    // env 的真实工作区名最可信；取不到才回退 AI 会话的 project_directory。
+    const name = portWorkspaceName(state.socketPort) || basename(data && data.project_directory);
     return name ? " · " + name : "";
   }
 
   function updateProjectName(data) {
+    // 头部项目名同样以 env 的真实工作区为主、AI 会话 project_directory 兜底（连不上 env 时仍有显示）。
+    const envName = portWorkspaceName(state.socketPort);
     const dir = data && data.project_directory ? data.project_directory : "";
-    els.projectName.textContent = basename(dir) || "No project";
-    els.projectName.title = dir || "";
+    els.projectName.textContent = envName || basename(dir) || "No project";
+    els.projectName.title = state.portWorkspaces[String(state.socketPort)] || dir || "";
   }
 
   function setVisualState(stateName, message) {
