@@ -6,6 +6,10 @@
 2. **MCP Follow-up 面板**：在 Cursor 聊天框上方注入一个 MCP 反馈面板，连接 `mcp-feedback-enhanced` 的 WebSocket，让你直接在 Cursor 里回复 `interactive_feedback`，支持端口自动扫描/自定义，并能按当前窗口自动匹配对应端口（多窗口、多端口同时在线时也不误连）。
 3. **输入法回车修复**：修复用中文输入法（拼音/注音等）组字时，按回车上屏候选词会被 Cursor 误当成「提交」的问题（含自带的 AskQuestion「Other」输入框）。
 
+## 致谢
+
+感谢 [LINUX DO](https://linux.do) 社区的交流氛围与灵感支持。
+
 ## 安装与使用（npx）
 
 无需克隆仓库，直接用 `npx` 运行（需 Node.js ≥ 20）：
